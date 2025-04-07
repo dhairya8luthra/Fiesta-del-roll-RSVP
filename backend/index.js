@@ -12,7 +12,7 @@ const app = express();
 const port = 3000;
 
 // Allow requests from localhost:3000 (adjust origin as needed)
-app.use(cors({ origin: 'http://localhost:5173' }));
+app.use(cors({  origin: ['http://localhost:3000', 'https://fiesta-del-roll-rsvp.vercel.app'] }));
 // Middleware to parse JSON bodies for the /verify endpoint
 app.use(express.json());
 
@@ -82,7 +82,7 @@ app.post('/upload', upload.single('csvFile'), (req, res) => {
             html: `
               <p>Hi ${name},</p>
               <p>Here is your unique token and QR code:</p>
-              <p><strong>Token:</strong> ${token}</p>
+              
               <p>
                 <img src="cid:qrCodeImage" alt="QR Code" />
               </p>
