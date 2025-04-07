@@ -32,7 +32,7 @@ function App() {
 
         // Verify the scanned token by calling your backend /verify endpoint
         try {
-          const response = await fetch('http://localhost:3000/verify', {
+          const response = await fetch('https://fiesta-del-roll-rsvp.onrender.com/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ token }),
@@ -72,7 +72,7 @@ function App() {
     formData.append("csvFile", csvFile);
 
     try {
-      const response = await fetch('http://localhost:3000/upload', {
+      const response = await fetch('https://fiesta-del-roll-rsvp.onrender.com/upload', {
         method: 'POST',
         body: formData,
       });
