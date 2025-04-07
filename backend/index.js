@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors'); // Import cors
 const multer = require('multer');
 const csvParser = require('csv-parser');
 const fs = require('fs');
@@ -10,6 +11,8 @@ const path = require('path');
 const app = express();
 const port = 3000;
 
+// Allow requests from localhost:3000 (adjust origin as needed)
+app.use(cors({ origin: 'http://localhost:5173' }));
 // Middleware to parse JSON bodies for the /verify endpoint
 app.use(express.json());
 
@@ -124,7 +127,9 @@ app.post('/upload', upload.single('csvFile'), (req, res) => {
 app.post('/verify', (req, res) => {
   const { token } = req.body;
   if (!token) {
+    console.error('Token is required.');
     return res.status(400).json({ valid: false, message: 'Token is required.' });
+    
   }
 
   // Read the scans.csv file into an array of records.
@@ -134,8 +139,9 @@ app.post('/verify', (req, res) => {
     .on('data', (data) => records.push(data))
     .on('end', () => {
       // Find the record that matches the token.
-      const record = records.find(r => r.token === token);
+      const record = records.find(r => r.token == token);
       if (!record) {
+        console.error('Token not found:', token);
         return res.status(404).json({ valid: false, message: 'Token not found.' });
       }
 

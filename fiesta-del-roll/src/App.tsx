@@ -28,16 +28,18 @@ function App() {
         scanner.clear();
         setScanResult(result);
         setShowScanner(false);
+        const token = JSON.parse(result).token;
 
         // Verify the scanned token by calling your backend /verify endpoint
         try {
-          const response = await fetch('/verify', {
+          const response = await fetch('http://localhost:3000/verify', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: result })
+            body: JSON.stringify({ token }),
           });
           const data = await response.json();
           setVerificationResult(data);
+          console.log("Verification result:", data);
         } catch (err) {
           console.error("Verification error:", err);
         }
