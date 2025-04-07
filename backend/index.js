@@ -1,5 +1,5 @@
 const express = require('express');
-const cors = require('cors'); // Import cors
+const cors = require('cors');
 const multer = require('multer');
 const csvParser = require('csv-parser');
 const fs = require('fs');
@@ -7,16 +7,17 @@ const { v4: uuidv4 } = require('uuid');
 const QRCode = require('qrcode');
 const nodemailer = require('nodemailer');
 const path = require('path');
+const { google } = require('googleapis');
 
 const app = express();
 const port = 3000;
 
-// Allow requests from localhost:3000 (adjust origin as needed)
-app.use(cors({  origin: ['http://localhost:3000', 'https://fiesta-del-roll-rsvp.vercel.app'] }));
-// Middleware to parse JSON bodies for the /verify endpoint
+// Allow requests from both localhost:3000 and your deployed Vercel app.
+app.use(cors({ origin: ['http://localhost:3000', 'https://fiesta-del-roll-rsvp.vercel.app'] }));
+// Middleware to parse JSON bodies for the /verify endpoint.
 app.use(express.json());
 
-// Configure multer for file upload (storing file on disk)
+// Configure multer for file upload (files are stored temporarily on disk)
 const upload = multer({ dest: 'uploads/' });
 
 // Configure nodemailer transporter (Replace with your actual SMTP credentials)
@@ -27,19 +28,28 @@ const transporter = nodemailer.createTransport({
   secure: true,
   auth: {
     user: 'fiestadelroll@gmail.com',       // Your email address
-    pass: 'izdg iecx ttxw nxej'             // Your email password or app password
+    pass: 'izdg iecx ttxw nxej'             // Your email password or app-specific password
   }
 });
 
-// Define the file path for the scans CSV that stores token, name, and scan count.
-const scansCsvPath = path.join(__dirname, 'scans.csv');
+// ----------------------
+// Google Sheets Setup
+// ----------------------
+// Replace with the path to your credentials JSON file and your spreadsheet ID.
+const GOOGLE_CREDENTIALS_FILE = 'credentials.json';
+const SPREADSHEET_ID = '1JR3D8Xkn2TFmEtK0EMjGwXVlnK8rcX45pVDVfdJLC54'; // <-- update with your sheet ID
+const SHEET_RANGE = 'Sheet1!A:C'; // Assuming your sheet is named "Sheet1" and has columns: token, name, scanCount.
 
-// Create scans.csv with header if it doesn't exist.
-if (!fs.existsSync(scansCsvPath)) {
-  fs.writeFileSync(scansCsvPath, 'token,name,scanCount\n');
-}
+const googleAuth = new google.auth.GoogleAuth({
+  keyFile: GOOGLE_CREDENTIALS_FILE,
+  scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+});
 
-// POST /upload endpoint to process CSV file upload
+const sheets = google.sheets({ version: 'v4', auth: googleAuth });
+
+// ----------------------
+// POST /upload endpoint
+// ----------------------
 app.post('/upload', upload.single('csvFile'), (req, res) => {
   const results = [];
   const filePath = req.file.path;
@@ -65,13 +75,12 @@ app.post('/upload', upload.single('csvFile'), (req, res) => {
 
         // Build the QR code payload with token and name.
         const qrPayload = JSON.stringify({ token, name });
-
         try {
           // Generate the QR code as a Data URL.
           const qrDataUrl = await QRCode.toDataURL(qrPayload);
           console.log(`Generated QR code for ${name}: ${qrDataUrl}`);
 
-          // Remove the prefix to extract the Base64 string.
+          // Remove the data URL prefix to extract the Base64 string.
           const base64Image = qrDataUrl.replace(/^data:image\/png;base64,/, "");
 
           // Compose the email with the inline QR code attachment.
@@ -82,7 +91,7 @@ app.post('/upload', upload.single('csvFile'), (req, res) => {
             html: `
               <p>Hi ${name},</p>
               <p>Here is your unique token and QR code:</p>
-              
+              <p><strong>Token:</strong> ${token}</p>
               <p>
                 <img src="cid:qrCodeImage" alt="QR Code" />
               </p>
@@ -93,7 +102,7 @@ app.post('/upload', upload.single('csvFile'), (req, res) => {
                 filename: 'qrcode.png',
                 content: base64Image,
                 encoding: 'base64',
-                cid: 'qrCodeImage' // Reference for inline image
+                cid: 'qrCodeImage' // Reference used in the HTML img tag.
               }
             ]
           };
@@ -105,9 +114,22 @@ app.post('/upload', upload.single('csvFile'), (req, res) => {
           console.error(`Error processing record for ${email}:`, error);
         }
 
-        // Append the token information to scans.csv with an initial scanCount of 0.
-        const row = `"${token}","${name}",0\n`;
-        fs.appendFileSync(scansCsvPath, row);
+        // Append the token information into your Google Sheet with an initial scanCount of 0.
+        try {
+          const authClient = await googleAuth.getClient();
+          await sheets.spreadsheets.values.append({
+            spreadsheetId: SPREADSHEET_ID,
+            range: SHEET_RANGE,
+            valueInputOption: 'USER_ENTERED',
+            resource: {
+              values: [[token, name, 0]]
+            },
+            auth: authClient
+          });
+          console.log(`Appended record for ${name} to Google Sheet.`);
+        } catch (error) {
+          console.error(`Error appending record for ${name} to Google Sheet:`, error);
+        }
       }
 
       // Remove the temporary uploaded CSV file.
@@ -115,7 +137,7 @@ app.post('/upload', upload.single('csvFile'), (req, res) => {
         if (err) console.error('Error removing file:', err);
       });
 
-      res.send('CSV processed, emails sent, and scan data stored.');
+      res.send('CSV processed, emails sent, and scan data stored in Google Sheet.');
     })
     .on('error', (error) => {
       console.error('Error reading CSV file:', error);
@@ -123,53 +145,73 @@ app.post('/upload', upload.single('csvFile'), (req, res) => {
     });
 });
 
-// POST /verify endpoint to verify token and update scan count
-app.post('/verify', (req, res) => {
+// ----------------------
+// POST /verify endpoint
+// ----------------------
+app.post('/verify', async (req, res) => {
   const { token } = req.body;
   if (!token) {
     console.error('Token is required.');
     return res.status(400).json({ valid: false, message: 'Token is required.' });
-    
   }
 
-  // Read the scans.csv file into an array of records.
-  const records = [];
-  fs.createReadStream(scansCsvPath)
-    .pipe(csvParser())
-    .on('data', (data) => records.push(data))
-    .on('end', () => {
-      // Find the record that matches the token.
-      const record = records.find(r => r.token == token);
-      if (!record) {
-        console.error('Token not found:', token);
-        return res.status(404).json({ valid: false, message: 'Token not found.' });
-      }
-
-      // Increment the scan count.
-      let scanCount = parseInt(record.scanCount, 10) || 0;
-      scanCount++;
-      record.scanCount = scanCount;
-
-      // Rewrite the entire CSV file with updated scan counts.
-      const header = 'token,name,scanCount\n';
-      const rows = records.map(r => `"${r.token}","${r.name}",${r.scanCount}`).join('\n');
-      const csvContent = header + rows + '\n';
-      fs.writeFile(scansCsvPath, csvContent, (err) => {
-        if (err) {
-          console.error('Error updating scans CSV:', err);
-          return res.status(500).json({ valid: false, message: 'Failed to update scan count.' });
-        }
-        // Respond with token validation, the person’s name, and updated scan count.
-        res.json({ valid: true, token, name: record.name, scanCount });
-      });
-    })
-    .on('error', (error) => {
-      console.error('Error reading scans CSV:', error);
-      res.status(500).json({ valid: false, message: 'Error reading scan data.' });
+  try {
+    const authClient = await googleAuth.getClient();
+    // Get the current values from the Google Sheet
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: SHEET_RANGE,
+      auth: authClient
     });
+    const rows = response.data.values; // rows is an array of arrays
+
+    if (!rows || rows.length < 2) {
+      return res.status(404).json({ valid: false, message: 'No data found in sheet.' });
+    }
+    // Assuming the first row is a header, search subsequent rows for the token.
+    let foundRowIndex = -1;
+    let currentRow;
+    for (let i = 1; i < rows.length; i++) {
+      if (rows[i][0] === token) {
+        foundRowIndex = i;
+        currentRow = rows[i];
+        break;
+      }
+    }
+    if (foundRowIndex === -1) {
+      console.error('Token not found:', token);
+      return res.status(404).json({ valid: false, message: 'Token not found.' });
+    }
+
+    // The row structure is [token, name, scanCount]. Increment scanCount.
+    let scanCount = parseInt(currentRow[2], 10) || 0;
+    scanCount++;
+    currentRow[2] = scanCount.toString();
+
+    // Update the row in Google Sheets.
+    // Note: Google Sheets rows are 1-indexed. The header row is row 1, so the row to update is foundRowIndex+1.
+    const updateRange = `Sheet1!C${foundRowIndex + 1}`;
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: updateRange,
+      valueInputOption: 'USER_ENTERED',
+      resource: {
+        values: [[scanCount]]
+      },
+      auth: authClient
+    });
+
+    // Respond with the updated data: token is valid, provide the name and the updated scan count.
+    res.json({ valid: true, token, name: currentRow[1], scanCount });
+  } catch (error) {
+    console.error('Error during verification:', error);
+    res.status(500).json({ valid: false, message: 'Error verifying token.' });
+  }
 });
 
+// ----------------------
 // Start the server
+// ----------------------
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
