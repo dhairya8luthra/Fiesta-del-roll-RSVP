@@ -28,7 +28,7 @@ const transporter = nodemailer.createTransport({
   secure: true,
   auth: {
     user: 'fiestadelroll@gmail.com',       // Your email address
-    pass: 'izdg iecx ttxw nxej'             // Your email password or app-specific password
+    pass: 'eytc egec begb xtcv'             // Your email password or app-specific password
   }
 });
 
